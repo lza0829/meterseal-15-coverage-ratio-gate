@@ -33,5 +33,14 @@ export const api = {
   setFate: (id, fate) => req(`/variances/${id}/fate`, { method: 'POST', body: JSON.stringify({ fate }) }),
   seal: (body) => req('/seal', { method: 'POST', body: JSON.stringify(body) }),
   settings: () => req('/settings'),
+  coveragePolicy: () => req('/coverage/policy'),
+  putCoveragePolicy: (body) => req('/coverage/policy', { method: 'PUT', body: JSON.stringify(body) }),
+  coverageScan: (periodId, persist = false) =>
+    req(`/coverage/scan?period_id=${encodeURIComponent(periodId)}&persist=${persist}`),
+  runPrecheck: (periodId) => req(`/coverage/precheck?period_id=${encodeURIComponent(periodId)}`, { method: 'POST' }),
+  prechecks: (periodId) => req('/coverage/prechecks' + (periodId ? `?period_id=${encodeURIComponent(periodId)}` : '')),
+  missing: (periodId) => req(`/coverage/missing?period_id=${encodeURIComponent(periodId)}`),
+  coverageSnapshot: (periodId) => req(`/coverage/snapshot?period_id=${encodeURIComponent(periodId)}`),
+  coverageGate: (periodId) => req(`/coverage/gate?period_id=${encodeURIComponent(periodId)}`),
   putSetting: (key, value) => req(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
 }

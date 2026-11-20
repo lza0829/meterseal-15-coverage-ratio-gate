@@ -16,3 +16,6 @@ data/
 # 本地环境
 .env
 .DS_Store
+
+# 测试缓存
+backend/.pytest_cache/

@@ -10,6 +10,24 @@ export const 命运 = {
   quarantine: '隔离',
 }
 
+export const 覆盖架构 = {
+  hard_gate: '覆盖率硬闸',
+  allow_skip: '允许低覆盖直封',
+}
+export const 覆盖状态 = {
+  pass: '达标',
+  fail: '不足',
+  skipped: '未强制',
+}
+export const 预检状态 = {
+  active: '有效',
+  superseded: '已作废',
+  sealed: '随封印',
+}
+export function 覆盖比(v) {
+  if (v == null) return '未计算'
+  return (v * 100).toFixed(1) + '%'
+}
 export function 标(map, key) {
   if (key == null || key === '') return '—'
   return map[key] || String(key)

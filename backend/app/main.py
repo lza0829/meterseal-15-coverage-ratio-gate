@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import PROJECT_NAME
 from app.seed import seed_if_empty
-from app.routers import dashboard, meters, readings, reconcile, settings
+from app.routers import coverage, dashboard, meters, readings, reconcile, settings
 
 seed_if_empty()
 
@@ -15,6 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(dashboard.router, prefix="/api")
+app.include_router(coverage.router, prefix="/api")
 app.include_router(meters.router, prefix="/api")
 app.include_router(readings.router, prefix="/api")
 app.include_router(reconcile.router, prefix="/api")

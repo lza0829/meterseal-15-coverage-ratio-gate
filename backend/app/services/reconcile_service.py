@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from app.db import connect
+from app.db import transaction
+from app.services import coverage
 from app.services.gate import assert_period_writable
 
 
@@ -15,8 +16,15 @@ def _now() -> str:
 
 def run_align(period_id: str) -> dict:
     assert_period_writable(period_id)
-    conn = connect()
-    try:
+    with transaction() as conn:
+        period = conn.execute(
+            "SELECT status FROM periods WHERE period_id=?", (period_id,)
+        ).fetchone()
+        if not period:
+            raise HTTPException(404, f"账期不存在: {period_id}")
+        if period["status"] == "sealed":
+            raise HTTPException(409, f"账期已封印，禁止对齐: {period_id}")
+
         est = {
             r["meter_id"]: r
             for r in conn.execute(
@@ -75,7 +83,6 @@ def run_align(period_id: str) -> dict:
                    VALUES (?,?,?,?,?,?,?,?)""",
                 variances,
             )
-        conn.commit()
         return {
             "batch_id": batch_id,
             "period_id": period_id,
@@ -84,13 +91,11 @@ def run_align(period_id: str) -> dict:
             "fingerprint": fingerprint,
             "status": "open",
         }
-    finally:
-        conn.close()
 
 
 def seal_period(period_id: str, batch_id: str | None = None) -> dict:
-    conn = connect()
-    try:
+    # BEGIN IMMEDIATE 与装载串行：拿到写锁后再算覆盖率，杜绝旧覆盖率半截落封。
+    with transaction() as conn:
         period = conn.execute(
             "SELECT * FROM periods WHERE period_id=?", (period_id,)
         ).fetchone()
@@ -121,33 +126,98 @@ def seal_period(period_id: str, batch_id: str | None = None) -> dict:
             "SELECT COUNT(*) AS c FROM variances WHERE batch_id=? AND fate='pending'",
             (batch_id,),
         ).fetchone()["c"]
-        # base: allow seal with pending (later topics can harden)
+
+        # 覆盖率闸：与预设扫描、快照、总览、缺失表同一口径。
+        gate = coverage.evaluate_seal_gate(conn, period_id)
+        if not gate["ok"]:
+            raise HTTPException(
+                409,
+                {
+                    "code": "coverage_gate_blocked",
+                    "message": gate["reason"],
+                    "architecture": gate["policy"]["architecture"],
+                    "threshold": gate["policy"]["threshold"],
+                    "stale": gate["stale"],
+                    "precheck": gate["precheck"],
+                },
+            )
+        snapshot = coverage.coverage_snapshot(conn, period_id)
+        if not snapshot["gate_ok"]:
+            # 闸门通过后快照必须同口径；否则视为内部口径分叉，宁可拒封。
+            raise HTTPException(500, "覆盖率口径分叉，拒封")
+        if (
+            snapshot["state"] == coverage.COVERAGE_STATE_SKIPPED
+            and gate["policy"]["architecture"] == coverage.HARD_GATE
+        ):
+            raise HTTPException(500, "硬闸架构不得写 skipped 覆盖快照")
+        if (
+            snapshot["state"] == coverage.COVERAGE_STATE_FAIL
+            and snapshot["gate_ok"]
+        ):
+            raise HTTPException(500, "覆盖率不足不得写达标快照")
+
         sealed_at = _now()
         conn.execute(
-            "UPDATE periods SET status='sealed', sealed_at=?, batch_no=? WHERE period_id=?",
-            (sealed_at, batch_id, period_id),
+            """UPDATE periods SET status='sealed', sealed_at=?, batch_no=?,
+                   coverage_architecture=?, coverage_state=?, coverage_ratio=?,
+                   coverage_threshold=?, coverage_method=?, coverage_missing=?,
+                   coverage_precheck_id=?, coverage_data_fingerprint=?
+               WHERE period_id=?""",
+            (
+                sealed_at,
+                batch_id,
+                snapshot["architecture"],
+                snapshot["state"],
+                snapshot["ratio"],
+                snapshot["threshold"],
+                snapshot["method"],
+                ",".join(snapshot["missing_meters"]),
+                snapshot["precheck_id"],
+                snapshot["data_fingerprint"],
+                period_id,
+            ),
         )
         conn.execute(
             "UPDATE reconcile_batches SET status='sealed' WHERE batch_id=?",
             (batch_id,),
         )
-        conn.commit()
+        conn.execute(
+            "UPDATE coverage_prechecks SET status='sealed' "
+            "WHERE period_id=? AND status='active'",
+            (period_id,),
+        )
         return {
             "period_id": period_id,
             "batch_id": batch_id,
             "sealed_at": sealed_at,
             "pending_left": pending,
             "status": "sealed",
+            "coverage": _snapshot_public(snapshot),
         }
-    finally:
-        conn.close()
+
+
+def _snapshot_public(snapshot: dict) -> dict:
+    return {
+        "architecture": snapshot["architecture"],
+        "state": snapshot["state"],
+        "coverage_ratio": snapshot["ratio"],
+        "coverage_percent": (
+            None if snapshot["ratio"] is None else round(snapshot["ratio"] * 100, 2)
+        ),
+        "threshold": snapshot["threshold"],
+        "estimate_key_count": snapshot["estimate_key_count"],
+        "covered_key_count": snapshot["covered_key_count"],
+        "missing_meters": snapshot["missing_meters"],
+        "method": snapshot["method"],
+        "precheck_id": snapshot["precheck_id"],
+        "data_fingerprint": snapshot["data_fingerprint"],
+    }
 
 
 def set_fate(variance_id: str, fate: str) -> dict:
     if fate not in ("pending", "accept_short", "accept_over", "quarantine"):
         raise HTTPException(400, "非法命运")
-    conn = connect()
-    try:
+    with transaction() as conn:
         row = conn.execute(
             "SELECT v.*, p.status AS period_status FROM variances v JOIN periods p ON p.period_id=v.period_id WHERE v.variance_id=?",
             (variance_id,),
@@ -157,7 +227,4 @@ def set_fate(variance_id: str, fate: str) -> dict:
         if row["period_status"] == "sealed":
             raise HTTPException(409, "账期已封印，禁止改命运")
         conn.execute("UPDATE variances SET fate=? WHERE variance_id=?", (fate, variance_id))
-        conn.commit()
         return {"variance_id": variance_id, "fate": fate}
-    finally:
-        conn.close()

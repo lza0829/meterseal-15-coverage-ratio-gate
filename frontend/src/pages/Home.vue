@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
-import { 批状态, 标 } from '../labels'
+import { 批状态, 覆盖架构, 覆盖状态, 覆盖比, 标 } from '../labels'
 const data = ref(null)
 const err = ref('')
 onMounted(async () => {
@@ -19,6 +19,26 @@ onMounted(async () => {
       <div class="stat">已封印账期<b>{{ data.sealed_periods }}</b></div>
       <div class="stat">表具数<b>{{ data.meter_count }}</b></div>
       <div class="stat">未决差额<b>{{ data.pending_variances }}</b></div>
+    </div>
+    <div class="panel" v-if="data && data.coverage">
+      <h3>覆盖率（当前账期）</h3>
+      <div class="grid">
+        <div class="stat">口径<b>{{ 标(覆盖架构, data.coverage.architecture) }}</b></div>
+        <div class="stat">覆盖率<b>{{ 覆盖比(data.coverage.coverage_ratio) }}</b></div>
+        <div class="stat">阈值<b>{{ 覆盖比(data.coverage.threshold) }}</b></div>
+        <div class="stat">缺失表<b>{{ data.coverage.missing_meters.length }}</b></div>
+        <div class="stat">状态<b>{{ 标(覆盖状态, data.coverage.state) }}</b></div>
+      </div>
+      <p class="msg" v-if="data.coverage.period_status !== 'sealed'">
+        封印闸：{{ data.coverage.gate_ok ? '可封' : '不可封 — ' + (data.coverage.gate_reason || '') }}
+      </p>
+      <p class="msg" v-if="data.coverage.active_precheck_stale === true">
+        当前预检已过期，请重新扫描覆盖率。
+      </p>
+      <p class="msg" v-if="data.coverage.missing_meters.length">
+        缺失：{{ data.coverage.missing_meters.join('、') }}
+        <router-link to="/coverage/missing">（清单）</router-link>
+      </p>
     </div>
     <div class="panel" v-if="data">
       <h3>最近对账批</h3>

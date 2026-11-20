@@ -54,17 +54,65 @@ CREATE TABLE IF NOT EXISTS variances (
   delta REAL NOT NULL,
   fate TEXT NOT NULL DEFAULT 'pending'
 );
+CREATE TABLE IF NOT EXISTS coverage_prechecks (
+  precheck_id TEXT PRIMARY KEY,
+  period_id TEXT NOT NULL,
+  architecture TEXT NOT NULL,
+  method TEXT NOT NULL,
+  estimate_key_count INTEGER NOT NULL,
+  covered_key_count INTEGER NOT NULL,
+  coverage_ratio REAL,
+  threshold REAL NOT NULL,
+  missing_meters TEXT NOT NULL,
+  data_fingerprint TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 """
 
+# 旧库补列：封印快照与预检绑定。缺失即补，重复启动安全。
+PERIOD_COVERAGE_COLUMNS = {
+    "coverage_architecture": "TEXT",
+    "coverage_state": "TEXT",
+    "coverage_ratio": "REAL",
+    "coverage_threshold": "REAL",
+    "coverage_method": "TEXT",
+    "coverage_missing": "TEXT",
+    "coverage_precheck_id": "TEXT",
+    "coverage_data_fingerprint": "TEXT",
+}
+
+DEFAULT_SETTINGS = {
+    "coverage_architecture": "hard_gate",
+    "coverage_threshold": "0.8",
+}
+
+
+def _migrate(conn) -> None:
+    cols = {
+        r["name"]
+        for r in conn.execute("PRAGMA table_info(periods)").fetchall()
+    }
+    for name, sql_type in PERIOD_COVERAGE_COLUMNS.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE periods ADD COLUMN {name} {sql_type}")
+    for key, value in DEFAULT_SETTINGS.items():
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING",
+            (key, value),
+        )
+
 
 def seed_if_empty() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         n = conn.execute("SELECT COUNT(*) AS c FROM meters").fetchone()["c"]
         if n:
             return
@@ -119,6 +167,17 @@ def seed_if_empty() -> None:
             "INSERT INTO settings(key,value) VALUES ('product_title','抄表簿')"
         )
         # 界面不露英文：表类型仍存 water/electric 码，前端映射为中文
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def migrate_now() -> None:
+    """建表 + 补列；测试或启动时显式调用。"""
+    conn = connect()
+    try:
+        conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()

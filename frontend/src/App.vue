@@ -12,6 +12,8 @@
         <router-link to="/estimates">估抄</router-link>
         <router-link to="/actuals">实抄</router-link>
         <router-link to="/reconcile">对齐差额</router-link>
+        <router-link to="/coverage">覆盖率预检</router-link>
+        <router-link to="/coverage/missing">缺失表</router-link>
         <router-link to="/seal">账期封印</router-link>
         <router-link to="/settings">设置</router-link>
       </nav>
